@@ -1,0 +1,63 @@
+pipeline {
+  agent any
+  environment {
+    AWS_REGION = 'us-east-1'
+    TF_WORKSPACE = 'default'
+  }
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+    stage('Terraform Init') {
+      steps {
+        withCredentials([[
+          $class: 'UsernamePasswordMultiBinding',
+          credentialsId: 'aws-creds', // set this in Jenkins
+          usernameVariable: 'AWS_ACCESS_KEY_ID',
+          passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+        ]]) {
+          sh '''
+            terraform init -input=false
+          '''
+        }
+      }
+    }
+    stage('Terraform Plan') {
+      steps {
+        withCredentials([[
+          $class: 'UsernamePasswordMultiBinding',
+          credentialsId: 'aws-creds',
+          usernameVariable: 'AWS_ACCESS_KEY_ID',
+          passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+        ]]) {
+          sh '''
+            terraform plan -out=tfplan -input=false -var "region=${AWS_REGION}"
+            terraform show -no-color tfplan > plan.txt
+            echo "===== PLAN START ====="
+            cat plan.txt
+            echo "===== PLAN END ====="
+          '''
+        }
+      }
+    }
+    stage('Approve and Apply') {
+      steps {
+        // manual approval in Jenkins UI before apply
+        input message: 'Approve Terraform apply?', ok: 'Apply'
+        withCredentials([[
+          $class: 'UsernamePasswordMultiBinding',
+          credentialsId: 'aws-creds',
+          usernameVariable: 'AWS_ACCESS_KEY_ID',
+          passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+        ]]) {
+          sh 'terraform apply -auto-approve tfplan'
+        }
+      }
+    }
+  }
+  post {
+    always { archiveArtifacts artifacts: 'plan.txt', fingerprint: true }
+    success { echo 'Infrastructure applied.' }
+    failure { echo 'Pipeline failed.' }
+  }
+}
